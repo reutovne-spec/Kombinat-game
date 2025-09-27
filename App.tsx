@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AppState, ResearchType, TelegramUser } from './types';
+import { AppState, ResearchType, ProductionType } from './types';
 import { 
   SHIFT_DURATION_MS, 
   SALARY_AMOUNT, 
@@ -21,12 +21,7 @@ import DailyRewardModal from './components/DailyRewardModal';
 import ResearchModal from './components/ResearchModal';
 import InventoryModal from './components/InventoryModal';
 import PartnershipModal from './components/PartnershipModal';
-import UserProfile from './components/UserProfile';
-
-interface AppProps {
-  user: TelegramUser;
-  onLogout: () => void;
-}
+import ProductionModal from './components/ProductionModal';
 
 interface ResearchData {
   level: number;
@@ -42,8 +37,8 @@ interface ActiveResearch {
   endTime: number;
 }
 
-const App: React.FC<AppProps> = ({ user, onLogout }) => {
-  const userId = user.id;
+const App: React.FC = () => {
+  const userId = 'local_user'; // Static user ID for local storage
 
   const getLocalStorageKey = (key: string) => `kombinat_${key}_${userId}`;
 
@@ -96,6 +91,12 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
     return saved ? parseInt(saved, 10) : Date.now();
   });
   const [unclaimedIncome, setUnclaimedIncome] = useState(0);
+
+  const [showProductionModal, setShowProductionModal] = useState<boolean>(false);
+  const [production, setProduction] = useState<ProductionType | null>(() => {
+    const saved = localStorage.getItem(getLocalStorageKey('production'));
+    return saved ? (saved as ProductionType) : null;
+  });
 
   // Effect to initialize state from localStorage on mount and check for daily reward
   useEffect(() => {
@@ -152,7 +153,7 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
       setCurrentDailyReward(reward);
       setShowDailyReward(true);
     }
-  }, [userId]);
+  }, []);
 
   // Effect to manage the countdown timer
   useEffect(() => {
@@ -217,28 +218,34 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
 
 
   // Effects to save data to localStorage
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('balance'), balance.toString()); }, [balance, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('level'), level.toString()); }, [level, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('experience'), experience.toString()); }, [experience, userId]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('balance'), balance.toString()); }, [balance]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('level'), level.toString()); }, [level]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('experience'), experience.toString()); }, [experience]);
   useEffect(() => {
     if (shiftEndTime) {
       localStorage.setItem(getLocalStorageKey('shiftEndTime'), shiftEndTime.toString());
     } else {
       localStorage.removeItem(getLocalStorageKey('shiftEndTime'));
     }
-  }, [shiftEndTime, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('researches'), JSON.stringify(researches)); }, [researches, userId]);
+  }, [shiftEndTime]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('researches'), JSON.stringify(researches)); }, [researches]);
   useEffect(() => {
     if (activeResearch) {
       localStorage.setItem(getLocalStorageKey('activeResearch'), JSON.stringify(activeResearch));
     } else {
       localStorage.removeItem(getLocalStorageKey('activeResearch'));
     }
-  }, [activeResearch, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('inventory'), JSON.stringify(Array.from(inventory))); }, [inventory, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('ownedPartnerships'), JSON.stringify(Array.from(ownedPartnerships))); }, [ownedPartnerships, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('lastCollectionTime'), lastCollectionTime.toString()); }, [lastCollectionTime, userId]);
-
+  }, [activeResearch]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('inventory'), JSON.stringify(Array.from(inventory))); }, [inventory]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('ownedPartnerships'), JSON.stringify(Array.from(ownedPartnerships))); }, [ownedPartnerships]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('lastCollectionTime'), lastCollectionTime.toString()); }, [lastCollectionTime]);
+  useEffect(() => {
+    if (production) {
+      localStorage.setItem(getLocalStorageKey('production'), production);
+    } else {
+      localStorage.removeItem(getLocalStorageKey('production'));
+    }
+  }, [production]);
 
   const startShift = useCallback(() => {
     const endTime = Date.now() + SHIFT_DURATION_MS;
@@ -282,7 +289,7 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
     localStorage.setItem(getLocalStorageKey('lastRewardClaimTime'), Date.now().toString());
     localStorage.setItem(getLocalStorageKey('dailyStreak'), dailyStreak.toString());
     setShowDailyReward(false);
-  }, [currentDailyReward, dailyStreak, userId]);
+  }, [currentDailyReward, dailyStreak]);
   
   const startResearch = useCallback((type: ResearchType) => {
     const research = researches[type];
@@ -329,6 +336,13 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
     setLastCollectionTime(Date.now());
   }, [unclaimedIncome]);
 
+  const joinProduction = useCallback((productionType: ProductionType) => {
+    if (!production) {
+      setProduction(productionType);
+      setShowProductionModal(false);
+    }
+  }, [production]);
+
 
   const renderContent = () => {
     switch (appState) {
@@ -366,7 +380,7 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
     }
   };
 
-  const isModalOpen = showDailyReward || showResearchModal || showInventoryModal || showPartnershipModal;
+  const isModalOpen = showDailyReward || showResearchModal || showInventoryModal || showPartnershipModal || showProductionModal;
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-4 relative font-sans">
@@ -399,8 +413,15 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
           balance={balance}
         />
       }
+      {showProductionModal &&
+        <ProductionModal
+          onClose={() => setShowProductionModal(false)}
+          currentProduction={production}
+          onJoinProduction={joinProduction}
+        />
+      }
 
-      <UserProfile user={user} onLogout={onLogout} />
+
       <Balance amount={balance} />
 
       <header className="text-center mb-6">
@@ -432,6 +453,9 @@ const App: React.FC<AppProps> = ({ user, onLogout }) => {
               </Button>
               <Button onClick={() => setShowPartnershipModal(true)} variant="secondary" disabled={showDailyReward}>
                 Партнерство
+              </Button>
+              <Button onClick={() => setShowProductionModal(true)} variant="secondary" disabled={showDailyReward}>
+                Производство
               </Button>
             </div>
         </aside>

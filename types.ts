@@ -9,6 +9,12 @@ export enum ResearchType {
   TRAINING = 'training',
 }
 
+export enum ProductionType {
+  SINTER = 'sinter',
+  STEEL = 'steel',
+  COKE = 'coke',
+}
+
 export interface InventoryItemData {
   id: string;
   name: string;
@@ -24,6 +30,13 @@ export interface PartnershipData {
   description: string;
   cost: number;
   dailyIncome: number;
+  icon: string;
+}
+
+export interface ProductionData {
+  id: ProductionType;
+  name: string;
+  description: string;
   icon: string;
 }
 

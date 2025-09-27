@@ -1,4 +1,4 @@
-import { InventoryItemData, PartnershipData } from './types';
+import { InventoryItemData, PartnershipData, ProductionData, ProductionType } from './types';
 
 export const SHIFT_DURATION_MS = 8 * 60 * 60 * 1000; // 8 hours
 export const SALARY_AMOUNT = 100;
@@ -57,4 +57,11 @@ export const PARTNERSHIPS: PartnershipData[] = [
   { id: 'taxi', name: 'Таксопарк', description: 'Ежедневный доход', cost: 50000, dailyIncome: 1100, icon: '🚕' },
   { id: 'shipping', name: 'Грузоперевозки', description: 'Ежедневный доход', cost: 200000, dailyIncome: 4500, icon: '🚚' },
   { id: 'market', name: 'Маркет спецодежды', description: 'Ежедневный доход', cost: 800000, dailyIncome: 18000, icon: '👕' },
+];
+
+// Productions
+export const PRODUCTIONS: ProductionData[] = [
+  { id: ProductionType.SINTER, name: 'Аглодоменное', description: 'Основа комбината, производство агломерата и чугуна.', icon: '🏭' },
+  { id: ProductionType.STEEL, name: 'Сталеплавильное', description: 'Сердце комбината, здесь чугун превращается в сталь.', icon: '🔥' },
+  { id: ProductionType.COKE, name: 'Коксохимическое', description: 'Обеспечивает комбинат топливом - коксом.', icon: '💨' },
 ];

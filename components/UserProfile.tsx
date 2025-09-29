@@ -3,10 +3,9 @@ import { TelegramUser } from '../types';
 
 interface UserProfileProps {
   user: TelegramUser;
-  onLogout: () => void;
 }
 
-const UserProfile: React.FC<UserProfileProps> = ({ user, onLogout }) => {
+const UserProfile: React.FC<UserProfileProps> = ({ user }) => {
   const defaultAvatar = 'https://telegram.org/img/t_logo.png';
 
   return (
@@ -18,12 +17,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ user, onLogout }) => {
       />
       <div>
         <p className="font-bold text-white leading-tight">{user.first_name}</p>
-        <button
-          onClick={onLogout}
-          className="text-xs text-red-400 hover:text-red-300 transition-colors"
-        >
-          Выйти
-        </button>
+        {user.username && <p className="text-xs text-gray-400">@{user.username}</p>}
       </div>
     </div>
   );

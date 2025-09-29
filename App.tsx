@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AppState, ResearchType, ProductionType } from './types';
+import { AppState, ResearchType, ProductionType, TelegramUser } from './types';
 import { 
   SHIFT_DURATION_MS, 
   SALARY_AMOUNT, 
@@ -22,6 +22,8 @@ import ResearchModal from './components/ResearchModal';
 import InventoryModal from './components/InventoryModal';
 import PartnershipModal from './components/PartnershipModal';
 import ProductionModal from './components/ProductionModal';
+import ActionButton from './components/ActionButton';
+import UserProfile from './components/UserProfile';
 
 interface ResearchData {
   level: number;
@@ -37,8 +39,12 @@ interface ActiveResearch {
   endTime: number;
 }
 
-const App: React.FC = () => {
-  const userId = 'local_user'; // Static user ID for local storage
+interface AppProps {
+  user: TelegramUser;
+}
+
+const App: React.FC<AppProps> = ({ user }) => {
+  const userId = user.id.toString();
 
   const getLocalStorageKey = (key: string) => `kombinat_${key}_${userId}`;
 
@@ -421,7 +427,7 @@ const App: React.FC = () => {
         />
       }
 
-
+      <UserProfile user={user} />
       <Balance amount={balance} />
 
       <header className="text-center mb-6">
@@ -444,19 +450,31 @@ const App: React.FC = () => {
         
         <aside className="lg:col-span-1 w-full bg-gray-800/50 backdrop-blur-md rounded-2xl p-6 shadow-2xl border border-gray-700">
             <h3 className="text-xl font-bold text-gray-300 mb-4 text-center border-b-2 border-gray-700 pb-2">Действия</h3>
-            <div className="flex flex-col gap-4">
-              <Button onClick={() => setShowResearchModal(true)} variant="secondary" disabled={showDailyReward}>
-                Исследования
-              </Button>
-              <Button onClick={() => setShowInventoryModal(true)} variant="secondary" disabled={showDailyReward}>
-                Инвентарь
-              </Button>
-              <Button onClick={() => setShowPartnershipModal(true)} variant="secondary" disabled={showDailyReward}>
-                Партнерство
-              </Button>
-              <Button onClick={() => setShowProductionModal(true)} variant="secondary" disabled={showDailyReward}>
-                Производство
-              </Button>
+            <div className="flex flex-row items-stretch gap-2">
+              <ActionButton 
+                icon="🔬" 
+                label="Исследования" 
+                onClick={() => setShowResearchModal(true)} 
+                disabled={showDailyReward} 
+              />
+              <ActionButton 
+                icon="🎒" 
+                label="Инвентарь" 
+                onClick={() => setShowInventoryModal(true)} 
+                disabled={showDailyReward} 
+              />
+              <ActionButton 
+                icon="🤝" 
+                label="Партнерство" 
+                onClick={() => setShowPartnershipModal(true)} 
+                disabled={showDailyReward} 
+              />
+              <ActionButton 
+                icon="🏭" 
+                label="Производство" 
+                onClick={() => setShowProductionModal(true)} 
+                disabled={showDailyReward} 
+              />
             </div>
         </aside>
       </div>

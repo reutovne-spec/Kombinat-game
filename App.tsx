@@ -1,6 +1,4 @@
-
-
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState, ResearchType, ProductionType, TelegramUser } from './types';
 import { 
   SHIFT_DURATION_MS, 
@@ -26,6 +24,7 @@ import PartnershipModal from './components/PartnershipModal';
 import ProductionModal from './components/ProductionModal';
 import ActionButton from './components/ActionButton';
 import UserProfile from './components/UserProfile';
+import { supabase } from './lib/supabaseClient';
 
 interface ResearchData {
   level: number;
@@ -41,149 +40,195 @@ interface ActiveResearch {
   endTime: number;
 }
 
+interface GameState {
+  appState: AppState;
+  balance: number;
+  level: number;
+  experience: number;
+  shiftEndTime: number | null;
+  dailyStreak: number;
+  lastRewardClaimTime: number | null;
+  researches: Researches;
+  activeResearch: ActiveResearch | null;
+  inventory: string[];
+  ownedPartnerships: string[];
+  lastCollectionTime: number | null;
+  production: ProductionType | null;
+}
+
+const DEFAULT_GAME_STATE: Omit<GameState, 'appState' | 'dailyStreak' | 'lastRewardClaimTime'> = {
+  balance: 0,
+  level: 1,
+  experience: 0,
+  shiftEndTime: null,
+  researches: {
+    [ResearchType.ECONOMIC]: { level: 0 },
+    [ResearchType.TRAINING]: { level: 0 },
+  },
+  activeResearch: null,
+  inventory: [],
+  ownedPartnerships: [],
+  lastCollectionTime: null,
+  production: null,
+};
+
+// Helper to ensure we don't load corrupted numerical data (like NaN or Infinity)
+const safeGetNumber = (value: unknown, defaultValue: number): number => {
+  return typeof value === 'number' && isFinite(value) ? value : defaultValue;
+};
+const safeGetNumberOrNull = (value: unknown): number | null => {
+  return typeof value === 'number' && isFinite(value) ? value : null;
+};
+
 interface AppProps {
   user: TelegramUser;
 }
 
 const App: React.FC<AppProps> = ({ user }) => {
-  const userId = user.id.toString();
-
-  const getLocalStorageKey = (key: string) => `kombinat_${key}_${userId}`;
-
-  // Robust state initializer
-  const initilizeState = <T,>(key: string, defaultValue: T, validator: (val: any) => val is T = (val): val is T => true): T => {
-    try {
-      const saved = localStorage.getItem(getLocalStorageKey(key));
-      if (saved === null) return defaultValue;
-      const parsed = JSON.parse(saved);
-      if (validator(parsed)) {
-        return parsed;
-      }
-      return defaultValue;
-    } catch {
-      return defaultValue;
-    }
-  };
-  
-  const initilizeNumberState = (key: string, defaultValue: number): number => {
-    const saved = localStorage.getItem(getLocalStorageKey(key));
-    if(saved === null) return defaultValue;
-    const parsed = parseInt(saved, 10);
-    return isNaN(parsed) ? defaultValue : parsed;
-  };
-
-  const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  const [balance, setBalance] = useState<number>(() => initilizeNumberState('balance', 0));
-  const [level, setLevel] = useState<number>(() => initilizeNumberState('level', 1));
-  const [experience, setExperience] = useState<number>(() => initilizeNumberState('experience', 0));
-  const [shiftEndTime, setShiftEndTime] = useState<number | null>(null);
+  const [gameState, setGameState] = useState<GameState | null>(null);
   const [remainingTime, setRemainingTime] = useState<number>(0);
-  
   const [showDailyReward, setShowDailyReward] = useState<boolean>(false);
-  const [dailyStreak, setDailyStreak] = useState<number>(1);
   const [currentDailyReward, setCurrentDailyReward] = useState<number>(0);
-  
-  const [showResearchModal, setShowResearchModal] = useState<boolean>(false);
-  const [researches, setResearches] = useState<Researches>(() => initilizeState<Researches>('researches', {
-    [ResearchType.ECONOMIC]: { level: 0 },
-    [ResearchType.TRAINING]: { level: 0 },
-  }, (val): val is Researches => val && val[ResearchType.ECONOMIC] && val[ResearchType.TRAINING]));
-  
-  const [activeResearch, setActiveResearch] = useState<ActiveResearch | null>(() => initilizeState<ActiveResearch | null>('activeResearch', null, (val): val is ActiveResearch | null => val === null || (typeof val === 'object' && 'type' in val && 'endTime' in val)));
-
-  const [showInventoryModal, setShowInventoryModal] = useState<boolean>(false);
-  const [inventory, setInventory] = useState<Set<string>>(() => {
-    const saved = initilizeState<string[]>('inventory', []);
-    return new Set(saved);
-  });
-
-  const [showPartnershipModal, setShowPartnershipModal] = useState<boolean>(false);
-  const [ownedPartnerships, setOwnedPartnerships] = useState<Set<string>>(() => {
-    const saved = initilizeState<string[]>('ownedPartnerships', []);
-    return new Set(saved);
-  });
-  
-  const [lastCollectionTime, setLastCollectionTime] = useState<number>(() => initilizeNumberState('lastCollectionTime', Date.now()));
   const [unclaimedIncome, setUnclaimedIncome] = useState(0);
 
+  const [showResearchModal, setShowResearchModal] = useState<boolean>(false);
+  const [showInventoryModal, setShowInventoryModal] = useState<boolean>(false);
+  const [showPartnershipModal, setShowPartnershipModal] = useState<boolean>(false);
   const [showProductionModal, setShowProductionModal] = useState<boolean>(false);
-  const [production, setProduction] = useState<ProductionType | null>(() => {
-    const saved = localStorage.getItem(getLocalStorageKey('production'));
-    return saved as ProductionType | null;
-  });
 
-  // Effect to initialize state from localStorage on mount and check for daily reward
+  const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load data from Supabase on mount
   useEffect(() => {
-    // Check for shift state
-    const savedEndTime = localStorage.getItem(getLocalStorageKey('shiftEndTime'));
-    if (savedEndTime) {
-      const endTime = parseInt(savedEndTime, 10);
-      if(isNaN(endTime)) return;
+    const loadGameData = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('game_data')
+        .eq('id', user.id)
+        .single();
 
-      const timeLeft = endTime - Date.now();
+      if (error && error.code !== 'PGRST116') { // Handle actual errors, ignore 'not found'
+        console.error("Failed to load game data:", error);
+        return;
+      }
+
+      const rawData = data?.game_data;
+
+      // Sanitize loaded data or use defaults to ensure stability
+      const sanitizedState: GameState = {
+        appState: AppState.IDLE,
+        balance: safeGetNumber(rawData?.balance, DEFAULT_GAME_STATE.balance),
+        level: Math.max(1, safeGetNumber(rawData?.level, DEFAULT_GAME_STATE.level)),
+        experience: safeGetNumber(rawData?.experience, DEFAULT_GAME_STATE.experience),
+        shiftEndTime: safeGetNumberOrNull(rawData?.shiftEndTime),
+        dailyStreak: Math.max(1, safeGetNumber(rawData?.dailyStreak, 1)),
+        lastRewardClaimTime: safeGetNumberOrNull(rawData?.lastRewardClaimTime),
+        researches: {
+          [ResearchType.ECONOMIC]: { level: safeGetNumber(rawData?.researches?.[ResearchType.ECONOMIC]?.level, 0) },
+          [ResearchType.TRAINING]: { level: safeGetNumber(rawData?.researches?.[ResearchType.TRAINING]?.level, 0) },
+        },
+        activeResearch: rawData?.activeResearch || null,
+        inventory: Array.isArray(rawData?.inventory) ? rawData.inventory : [],
+        ownedPartnerships: Array.isArray(rawData?.ownedPartnerships) ? rawData.ownedPartnerships : [],
+        lastCollectionTime: safeGetNumberOrNull(rawData?.lastCollectionTime),
+        production: rawData?.production || null,
+      };
       
-      setShiftEndTime(endTime);
-      if (timeLeft > 0) {
-        setAppState(AppState.ON_SHIFT);
-        setRemainingTime(timeLeft);
-      } else {
-        setAppState(AppState.SHIFT_OVER);
-        setRemainingTime(0);
+      // If this was a new user, their profile needs to be created with the sanitized (default) state
+      if (!data) {
+        const { error: upsertError } = await supabase.from('profiles').upsert({ id: user.id, game_data: sanitizedState });
+        if (upsertError) {
+          console.error("Failed to create profile:", upsertError);
+        } else {
+          console.log("New profile created with default state.");
+        }
       }
-    } else {
-      setAppState(AppState.IDLE);
-    }
 
-    // Check for daily reward streak
-    const lastClaimTimeStr = localStorage.getItem(getLocalStorageKey('lastRewardClaimTime'));
-    const savedStreak = parseInt(localStorage.getItem(getLocalStorageKey('dailyStreak')) || '1', 10);
-    
-    if (!lastClaimTimeStr) {
-      // First time user, reward is available
-      const reward = getDailyRewardAmount(1);
-      setDailyStreak(1);
-      setCurrentDailyReward(reward);
-      setShowDailyReward(true);
-      return;
-    }
+      let loadedState = { ...sanitizedState };
 
-    const lastClaimTime = parseInt(lastClaimTimeStr, 10);
-    if(isNaN(lastClaimTime)) return;
-    
-    const lastClaimDate = new Date(lastClaimTime);
-    const now = new Date();
-
-    lastClaimDate.setHours(0, 0, 0, 0);
-    now.setHours(0, 0, 0, 0);
-
-    const diffTime = now.getTime() - lastClaimDate.getTime();
-    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays > 0) {
-      let newStreak;
-      if (diffDays === 1) {
-        newStreak = savedStreak + 1;
+      // Check shift status
+      if (loadedState.shiftEndTime && loadedState.shiftEndTime > 0) {
+        const timeLeft = loadedState.shiftEndTime - Date.now();
+        if (timeLeft > 0) {
+          loadedState.appState = AppState.ON_SHIFT;
+          setRemainingTime(timeLeft);
+        } else {
+          loadedState.appState = AppState.SHIFT_OVER;
+          setRemainingTime(0);
+        }
       } else {
-        newStreak = 1;
+        loadedState.appState = AppState.IDLE;
       }
-      const reward = getDailyRewardAmount(newStreak);
-      setDailyStreak(newStreak);
-      setCurrentDailyReward(reward);
-      setShowDailyReward(true);
-    }
-  }, [userId]);
 
-  // Effect to manage the countdown timer
+      // Check daily reward
+      const lastClaimTime = loadedState.lastRewardClaimTime;
+      const savedStreak = loadedState.dailyStreak;
+      
+      if (!lastClaimTime) {
+        const reward = getDailyRewardAmount(1);
+        loadedState.dailyStreak = 1;
+        setCurrentDailyReward(reward);
+        setShowDailyReward(true);
+      } else {
+        const lastClaimDate = new Date(lastClaimTime);
+        const now = new Date();
+        lastClaimDate.setHours(0, 0, 0, 0);
+        now.setHours(0, 0, 0, 0);
+
+        const diffTime = now.getTime() - lastClaimDate.getTime();
+        const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays > 0) {
+          const newStreak = diffDays === 1 ? savedStreak + 1 : 1;
+          const reward = getDailyRewardAmount(newStreak);
+          loadedState.dailyStreak = newStreak;
+          setCurrentDailyReward(reward);
+          setShowDailyReward(true);
+        }
+      }
+
+      setGameState(loadedState);
+    };
+
+    loadGameData();
+  }, [user.id]);
+
+  // Debounced effect to save data to Supabase
   useEffect(() => {
-    if (appState !== AppState.ON_SHIFT || !shiftEndTime) {
-      return;
+    if (!gameState) return;
+
+    if (debounceTimeout.current) {
+      clearTimeout(debounceTimeout.current);
     }
 
+    debounceTimeout.current = setTimeout(async () => {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ game_data: gameState })
+        .eq('id', user.id);
+      
+      if (error) {
+        console.error("Error saving game data:", error);
+      }
+    }, 1000);
+
+    return () => {
+      if (debounceTimeout.current) {
+        clearTimeout(debounceTimeout.current);
+      }
+    };
+  }, [gameState, user.id]);
+
+
+  // Effect for shift timer
+  useEffect(() => {
+    if (gameState?.appState !== AppState.ON_SHIFT || !gameState?.shiftEndTime) return;
+    
     const intervalId = setInterval(() => {
-      const timeLeft = shiftEndTime - Date.now();
+      const timeLeft = gameState.shiftEndTime! - Date.now();
       if (timeLeft <= 0) {
         setRemainingTime(0);
-        setAppState(AppState.SHIFT_OVER);
+        setGameState(prev => prev ? ({ ...prev, appState: AppState.SHIFT_OVER }) : null);
         clearInterval(intervalId);
       } else {
         setRemainingTime(timeLeft);
@@ -191,37 +236,40 @@ const App: React.FC<AppProps> = ({ user }) => {
     }, 1000);
 
     return () => clearInterval(intervalId);
-  }, [appState, shiftEndTime]);
+  }, [gameState?.appState, gameState?.shiftEndTime]);
   
-  // Effect to check for completed research
+  // Effect for active research
   useEffect(() => {
-    if (!activeResearch) return;
+    if (!gameState?.activeResearch) return;
+    const { activeResearch } = gameState;
 
     const checkResearch = () => {
       if (Date.now() >= activeResearch.endTime) {
-        setResearches(prev => {
-          const newResearches = { ...prev };
+        setGameState(prev => {
+          if(!prev) return null;
+          const newResearches = { ...prev.researches };
           newResearches[activeResearch.type].level++;
-          return newResearches;
+          return { ...prev, researches: newResearches, activeResearch: null };
         });
-        setActiveResearch(null);
       }
     };
     
     checkResearch();
-    const intervalId = setInterval(checkResearch, 1000);
+    const intervalId = setInterval(checkResearch, 5000);
     return () => clearInterval(intervalId);
-  }, [activeResearch]);
+  }, [gameState?.activeResearch]);
 
-  // Effect to calculate passive income
+  // Effect for passive income
   useEffect(() => {
+    if (!gameState || gameState.ownedPartnerships.length === 0 || gameState.lastCollectionTime === null) {
+      setUnclaimedIncome(0);
+      return;
+    }
+    const { ownedPartnerships, lastCollectionTime } = gameState;
+
     const calculateAndSetIncome = () => {
-      if (ownedPartnerships.size === 0) {
-        setUnclaimedIncome(0);
-        return;
-      }
       const totalDailyIncome = PARTNERSHIPS
-        .filter(p => ownedPartnerships.has(p.id))
+        .filter(p => ownedPartnerships.includes(p.id))
         .reduce((sum, p) => sum + p.dailyIncome, 0);
       
       const timeDiffMs = Date.now() - lastCollectionTime;
@@ -230,58 +278,35 @@ const App: React.FC<AppProps> = ({ user }) => {
     };
 
     calculateAndSetIncome();
-    const interval = setInterval(calculateAndSetIncome, 1000);
+    const interval = setInterval(calculateAndSetIncome, 5000);
     return () => clearInterval(interval);
-  }, [ownedPartnerships, lastCollectionTime]);
+  }, [gameState?.ownedPartnerships, gameState?.lastCollectionTime]);
 
-
-  // Effects to save data to localStorage
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('balance'), balance.toString()); }, [balance, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('level'), level.toString()); }, [level, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('experience'), experience.toString()); }, [experience, userId]);
-  useEffect(() => {
-    if (shiftEndTime) {
-      localStorage.setItem(getLocalStorageKey('shiftEndTime'), shiftEndTime.toString());
-    } else {
-      localStorage.removeItem(getLocalStorageKey('shiftEndTime'));
-    }
-  }, [shiftEndTime, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('researches'), JSON.stringify(researches)); }, [researches, userId]);
-  useEffect(() => {
-    if (activeResearch) {
-      localStorage.setItem(getLocalStorageKey('activeResearch'), JSON.stringify(activeResearch));
-    } else {
-      localStorage.removeItem(getLocalStorageKey('activeResearch'));
-    }
-  }, [activeResearch, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('inventory'), JSON.stringify(Array.from(inventory))); }, [inventory, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('ownedPartnerships'), JSON.stringify(Array.from(ownedPartnerships))); }, [ownedPartnerships, userId]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('lastCollectionTime'), lastCollectionTime.toString()); }, [lastCollectionTime, userId]);
-  useEffect(() => {
-    if (production) {
-      localStorage.setItem(getLocalStorageKey('production'), production);
-    } else {
-      localStorage.removeItem(getLocalStorageKey('production'));
-    }
-  }, [production, userId]);
+  const updateState = (updater: (prevState: GameState) => Partial<GameState>) => {
+    setGameState(prev => prev ? { ...prev, ...updater(prev) } : null);
+  };
 
   const startShift = useCallback(() => {
     const endTime = Date.now() + SHIFT_DURATION_MS;
-    setShiftEndTime(endTime);
+    updateState(() => ({
+      shiftEndTime: endTime,
+      appState: AppState.ON_SHIFT,
+    }));
     setRemainingTime(SHIFT_DURATION_MS);
-    setAppState(AppState.ON_SHIFT);
   }, []);
 
   const claimSalary = useCallback(() => {
+    if (!gameState) return;
+    const { researches, inventory, experience, level } = gameState;
+
     const researchBonus = researches[ResearchType.ECONOMIC].level * RESEARCH_BONUS_PER_LEVEL;
     const inventoryBonus = INVENTORY_ITEMS
-      .filter(item => inventory.has(item.id))
+      .filter(item => inventory.includes(item.id))
       .reduce((sum, item) => sum + item.bonus, 0);
 
     const totalBonus = 1 + researchBonus + inventoryBonus;
     const finalSalary = Math.round(SALARY_AMOUNT * totalBonus);
-    setBalance(prevBalance => prevBalance + finalSalary);
-
+    
     const xpBonus = 1 + researches[ResearchType.TRAINING].level * RESEARCH_BONUS_PER_LEVEL;
     const finalXp = Math.round(XP_PER_SHIFT * xpBonus);
 
@@ -294,84 +319,100 @@ const App: React.FC<AppProps> = ({ user }) => {
         currentLevel++;
         xpNeeded = getXpForNextLevel(currentLevel);
     }
-
-    setLevel(currentLevel);
-    setExperience(currentXp);
     
-    setShiftEndTime(null);
-    setAppState(AppState.IDLE);
-  }, [experience, level, researches, inventory]);
+    updateState(prev => ({
+      balance: prev.balance + finalSalary,
+      level: currentLevel,
+      experience: currentXp,
+      shiftEndTime: null,
+      appState: AppState.IDLE,
+    }));
+  }, [gameState]);
 
   const claimDailyReward = useCallback(() => {
-    setBalance(prevBalance => prevBalance + currentDailyReward);
-    localStorage.setItem(getLocalStorageKey('lastRewardClaimTime'), Date.now().toString());
-    localStorage.setItem(getLocalStorageKey('dailyStreak'), dailyStreak.toString());
+    if (!gameState) return;
+    updateState(prev => ({
+      balance: prev.balance + currentDailyReward,
+      lastRewardClaimTime: Date.now(),
+      dailyStreak: prev.dailyStreak,
+    }));
     setShowDailyReward(false);
-  }, [currentDailyReward, dailyStreak, userId]);
-  
-  const startResearch = useCallback((type: ResearchType) => {
-    const research = researches[type];
-    if (research.level >= MAX_RESEARCH_LEVEL || activeResearch) {
-      return;
-    }
+  }, [currentDailyReward, gameState]);
 
+  const startResearch = useCallback((type: ResearchType) => {
+    if (!gameState) return;
+    const { researches, activeResearch, balance } = gameState;
+    const research = researches[type];
+    if (research.level >= MAX_RESEARCH_LEVEL || activeResearch) return;
+    
     const cost = getResearchCost(research.level + 1);
     if (balance >= cost) {
-      setBalance(prev => prev - cost);
       const duration = getResearchDurationMs(research.level + 1);
       const endTime = Date.now() + duration;
-      setActiveResearch({ type, endTime });
+      updateState(prev => ({
+        balance: prev.balance - cost,
+        activeResearch: { type, endTime },
+      }));
       setShowResearchModal(false);
     }
-  }, [researches, activeResearch, balance]);
-  
+  }, [gameState]);
+
   const purchaseItem = useCallback((itemId: string) => {
+    if (!gameState) return;
     const item = INVENTORY_ITEMS.find(i => i.id === itemId);
-    if (!item || inventory.has(itemId) || balance < item.cost) {
-      return;
-    }
-    setBalance(prev => prev - item.cost);
-    setInventory(prev => new Set(prev).add(itemId));
-  }, [balance, inventory]);
+    if (!item || gameState.inventory.includes(itemId) || gameState.balance < item.cost) return;
+
+    updateState(prev => ({
+      balance: prev.balance - item.cost,
+      inventory: [...prev.inventory, itemId],
+    }));
+  }, [gameState]);
 
   const purchasePartnership = useCallback((partnershipId: string) => {
+    if (!gameState) return;
     const partnership = PARTNERSHIPS.find(p => p.id === partnershipId);
-    if (!partnership || ownedPartnerships.has(partnershipId) || balance < partnership.cost) {
-        return;
-    }
-    if (ownedPartnerships.size === 0) {
-        setLastCollectionTime(Date.now());
-    }
-    setBalance(prev => prev - partnership.cost);
-    setOwnedPartnerships(prev => new Set(prev).add(partnershipId));
-  }, [balance, ownedPartnerships]);
+    if (!partnership || gameState.ownedPartnerships.includes(partnershipId) || gameState.balance < partnership.cost) return;
+
+    updateState(prev => ({
+      balance: prev.balance - partnership.cost,
+      ownedPartnerships: [...prev.ownedPartnerships, partnershipId],
+      lastCollectionTime: prev.ownedPartnerships.length === 0 ? Date.now() : prev.lastCollectionTime,
+    }));
+  }, [gameState]);
 
   const claimPassiveIncome = useCallback(() => {
     const incomeToClaim = Math.floor(unclaimedIncome);
-    if (incomeToClaim <= 0) return;
+    if (incomeToClaim <= 0 || !gameState) return;
     
-    setBalance(prev => prev + incomeToClaim);
-    setLastCollectionTime(Date.now());
-  }, [unclaimedIncome]);
+    updateState(prev => ({
+      balance: prev.balance + incomeToClaim,
+      lastCollectionTime: Date.now(),
+    }));
+  }, [unclaimedIncome, gameState]);
 
   const joinProduction = useCallback((productionType: ProductionType) => {
-    if (!production) {
-      setProduction(productionType);
+    if (!gameState?.production) {
+      updateState(() => ({ production: productionType }));
       setShowProductionModal(false);
     }
-  }, [production]);
+  }, [gameState]);
 
+  if (!gameState) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        <p className="text-xl animate-pulse">Загрузка данных с комбината...</p>
+      </div>
+    );
+  }
 
   const renderContent = () => {
-    switch (appState) {
+    switch (gameState.appState) {
       case AppState.ON_SHIFT:
         return (
           <div className="flex flex-col items-center gap-8">
             <h2 className="text-3xl font-semibold text-gray-300">Смена идет</h2>
             <Timer remainingTime={remainingTime} />
-            <Button onClick={() => {}} disabled={true} variant="secondary">
-              На смене...
-            </Button>
+            <Button disabled={true} variant="secondary">На смене...</Button>
           </div>
         );
       case AppState.SHIFT_OVER:
@@ -379,9 +420,7 @@ const App: React.FC<AppProps> = ({ user }) => {
           <div className="flex flex-col items-center gap-8">
             <h2 className="text-3xl font-bold text-green-400">Смена окончена!</h2>
             <p className="text-xl text-gray-400">Можно забрать свою зарплату.</p>
-            <Button onClick={claimSalary}>
-              Получить зарплату
-            </Button>
+            <Button onClick={claimSalary}>Получить зарплату</Button>
           </div>
         );
       case AppState.IDLE:
@@ -390,9 +429,7 @@ const App: React.FC<AppProps> = ({ user }) => {
           <div className="flex flex-col items-center gap-8">
             <h2 className="text-3xl font-semibold text-gray-300">Готовы к работе?</h2>
             <p className="text-xl text-gray-400">Смена длится 8 часов.</p>
-            <Button onClick={startShift} disabled={showDailyReward}>
-              На смену
-            </Button>
+            <Button onClick={startShift} disabled={showDailyReward}>На смену</Button>
           </div>
         );
     }
@@ -404,21 +441,21 @@ const App: React.FC<AppProps> = ({ user }) => {
     <div className="min-h-screen bg-gray-900 text-white flex flex-col items-start p-4 pt-8 relative font-sans">
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre-v2.png')] opacity-5"></div>
       
-      {showDailyReward && <DailyRewardModal onClaim={claimDailyReward} rewardAmount={currentDailyReward} streakDay={dailyStreak} />}
+      {showDailyReward && <DailyRewardModal onClaim={claimDailyReward} rewardAmount={currentDailyReward} streakDay={gameState.dailyStreak} />}
       {showResearchModal && 
         <ResearchModal 
           onClose={() => setShowResearchModal(false)}
-          researches={researches}
-          activeResearch={activeResearch}
+          researches={gameState.researches}
+          activeResearch={gameState.activeResearch}
           onStartResearch={startResearch}
-          balance={balance}
+          balance={gameState.balance}
         />}
       {showInventoryModal &&
         <InventoryModal
           onClose={() => setShowInventoryModal(false)}
-          ownedItemIds={inventory}
+          ownedItemIds={new Set(gameState.inventory)}
           onPurchaseItem={purchaseItem}
-          balance={balance}
+          balance={gameState.balance}
         />
       }
       {showPartnershipModal &&
@@ -426,21 +463,21 @@ const App: React.FC<AppProps> = ({ user }) => {
           onClose={() => setShowPartnershipModal(false)}
           onPurchasePartnership={purchasePartnership}
           onClaimIncome={claimPassiveIncome}
-          ownedPartnershipIds={ownedPartnerships}
+          ownedPartnershipIds={new Set(gameState.ownedPartnerships)}
           unclaimedIncome={unclaimedIncome}
-          balance={balance}
+          balance={gameState.balance}
         />
       }
       {showProductionModal &&
         <ProductionModal
           onClose={() => setShowProductionModal(false)}
-          currentProduction={production}
+          currentProduction={gameState.production}
           onJoinProduction={joinProduction}
         />
       }
 
       <UserProfile user={user} />
-      <Balance amount={balance} />
+      <Balance amount={gameState.balance} />
 
       <div className="w-full flex flex-col items-center">
         <header className="text-center mb-6 mt-16 sm:mt-8">
@@ -451,9 +488,9 @@ const App: React.FC<AppProps> = ({ user }) => {
         </header>
 
         <ExperienceBar
-          level={level}
-          currentXp={experience}
-          xpForNextLevel={getXpForNextLevel(level)}
+          level={gameState.level}
+          currentXp={gameState.experience}
+          xpForNextLevel={getXpForNextLevel(gameState.level)}
         />
 
         <div className={`w-full max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 items-start transition-filter duration-300 ${isModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
@@ -464,30 +501,10 @@ const App: React.FC<AppProps> = ({ user }) => {
           <aside className="lg:col-span-1 w-full bg-gray-800/50 backdrop-blur-md rounded-2xl p-6 shadow-2xl border border-gray-700">
               <h3 className="text-xl font-bold text-gray-300 mb-4 text-center border-b-2 border-gray-700 pb-2">Действия</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-2 gap-2">
-                <ActionButton 
-                  icon="🔬" 
-                  label="Исследования" 
-                  onClick={() => setShowResearchModal(true)} 
-                  disabled={showDailyReward} 
-                />
-                <ActionButton 
-                  icon="🎒" 
-                  label="Инвентарь" 
-                  onClick={() => setShowInventoryModal(true)} 
-                  disabled={showDailyReward} 
-                />
-                <ActionButton 
-                  icon="🤝" 
-                  label="Партнерство" 
-                  onClick={() => setShowPartnershipModal(true)} 
-                  disabled={showDailyReward} 
-                />
-                <ActionButton 
-                  icon="🏭" 
-                  label="Производство" 
-                  onClick={() => setShowProductionModal(true)} 
-                  disabled={showDailyReward} 
-                />
+                <ActionButton icon="🔬" label="Исследования" onClick={() => setShowResearchModal(true)} disabled={showDailyReward} />
+                <ActionButton icon="🎒" label="Инвентарь" onClick={() => setShowInventoryModal(true)} disabled={showDailyReward} />
+                <ActionButton icon="🤝" label="Партнерство" onClick={() => setShowPartnershipModal(true)} disabled={showDailyReward} />
+                <ActionButton icon="🏭" label="Производство" onClick={() => setShowProductionModal(true)} disabled={showDailyReward} />
               </div>
           </aside>
         </div>

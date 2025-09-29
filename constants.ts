@@ -47,7 +47,7 @@ export const INVENTORY_ITEMS: InventoryItemData[] = [
   { id: 'helmet', name: 'Новая каска', description: '+3% к зарплате', bonus: 0.03, cost: 500, icon: '👷' },
   { id: 'boots', name: 'Прочные ботинки', description: '+5% к зарплате', bonus: 0.05, cost: 1200, icon: '🥾' },
   { id: 'tools', name: 'Улучшенный инструмент', description: '+7% к зарплате', bonus: 0.07, cost: 3000, icon: '🛠️' },
-  { id: 'thermos', name: 'Современный термос', description: '+10% к зарплате', bonus: 0.10, cost: 7500, icon: ' thermos' },
+  { id: 'thermos', name: 'Современный термос', description: '+10% к зарплате', bonus: 0.10, cost: 7500, icon: '☕' },
   { id: 'transport', name: 'Личный транспорт', description: '+15% к зарплате', bonus: 0.15, cost: 20000, icon: '🚗' },
 ];
 

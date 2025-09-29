@@ -50,22 +50,32 @@ const App: React.FC<AppProps> = ({ user }) => {
 
   const getLocalStorageKey = (key: string) => `kombinat_${key}_${userId}`;
 
+  // Robust state initializer
+  const initilizeState = <T,>(key: string, defaultValue: T, validator: (val: any) => val is T = (val): val is T => true): T => {
+    try {
+      const saved = localStorage.getItem(getLocalStorageKey(key));
+      if (saved === null) return defaultValue;
+      const parsed = JSON.parse(saved);
+      if (validator(parsed)) {
+        return parsed;
+      }
+      return defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  };
+  
+  const initilizeNumberState = (key: string, defaultValue: number): number => {
+    const saved = localStorage.getItem(getLocalStorageKey(key));
+    if(saved === null) return defaultValue;
+    const parsed = parseInt(saved, 10);
+    return isNaN(parsed) ? defaultValue : parsed;
+  };
+
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
-  const [balance, setBalance] = useState<number>(() => {
-    const saved = localStorage.getItem(getLocalStorageKey('balance'));
-    const parsed = parseInt(saved || '0', 10);
-    return isNaN(parsed) ? 0 : parsed;
-  });
-  const [level, setLevel] = useState<number>(() => {
-    const saved = localStorage.getItem(getLocalStorageKey('level'));
-    const parsed = parseInt(saved || '1', 10);
-    return isNaN(parsed) ? 1 : parsed;
-  });
-  const [experience, setExperience] = useState<number>(() => {
-    const saved = localStorage.getItem(getLocalStorageKey('experience'));
-    const parsed = parseInt(saved || '0', 10);
-    return isNaN(parsed) ? 0 : parsed;
-  });
+  const [balance, setBalance] = useState<number>(() => initilizeNumberState('balance', 0));
+  const [level, setLevel] = useState<number>(() => initilizeNumberState('level', 1));
+  const [experience, setExperience] = useState<number>(() => initilizeNumberState('experience', 0));
   const [shiftEndTime, setShiftEndTime] = useState<number | null>(null);
   const [remainingTime, setRemainingTime] = useState<number>(0);
   
@@ -74,79 +84,32 @@ const App: React.FC<AppProps> = ({ user }) => {
   const [currentDailyReward, setCurrentDailyReward] = useState<number>(0);
   
   const [showResearchModal, setShowResearchModal] = useState<boolean>(false);
-  const [researches, setResearches] = useState<Researches>(() => {
-    const saved = localStorage.getItem(getLocalStorageKey('researches'));
-    const defaultState = {
-      [ResearchType.ECONOMIC]: { level: 0 },
-      [ResearchType.TRAINING]: { level: 0 },
-    };
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Basic validation
-        if (parsed[ResearchType.ECONOMIC] && parsed[ResearchType.TRAINING]) {
-          return parsed;
-        }
-      } catch (e) {
-        console.error("Error parsing researches from localStorage", e);
-      }
-    }
-    return defaultState;
-  });
-  const [activeResearch, setActiveResearch] = useState<ActiveResearch | null>(() => {
-     const saved = localStorage.getItem(getLocalStorageKey('activeResearch'));
-     if (saved) {
-       try {
-         return JSON.parse(saved);
-       } catch (e) {
-         console.error("Error parsing activeResearch from localStorage", e);
-       }
-     }
-     return null;
-  });
+  const [researches, setResearches] = useState<Researches>(() => initilizeState<Researches>('researches', {
+    [ResearchType.ECONOMIC]: { level: 0 },
+    [ResearchType.TRAINING]: { level: 0 },
+  }, (val): val is Researches => val && val[ResearchType.ECONOMIC] && val[ResearchType.TRAINING]));
   
+  const [activeResearch, setActiveResearch] = useState<ActiveResearch | null>(() => initilizeState<ActiveResearch | null>('activeResearch', null, (val): val is ActiveResearch | null => val === null || (typeof val === 'object' && 'type' in val && 'endTime' in val)));
+
   const [showInventoryModal, setShowInventoryModal] = useState<boolean>(false);
   const [inventory, setInventory] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem(getLocalStorageKey('inventory'));
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return new Set(parsed);
-        }
-      } catch (e) {
-        console.error("Error parsing inventory from localStorage", e);
-      }
-    }
-    return new Set();
+    const saved = initilizeState<string[]>('inventory', []);
+    return new Set(saved);
   });
 
   const [showPartnershipModal, setShowPartnershipModal] = useState<boolean>(false);
   const [ownedPartnerships, setOwnedPartnerships] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem(getLocalStorageKey('ownedPartnerships'));
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return new Set(parsed);
-        }
-      } catch (e) {
-        console.error("Error parsing ownedPartnerships from localStorage", e);
-      }
-    }
-    return new Set();
+    const saved = initilizeState<string[]>('ownedPartnerships', []);
+    return new Set(saved);
   });
-  const [lastCollectionTime, setLastCollectionTime] = useState<number>(() => {
-    const saved = localStorage.getItem(getLocalStorageKey('lastCollectionTime'));
-    const parsed = parseInt(saved || '', 10);
-    return isNaN(parsed) ? Date.now() : parsed;
-  });
+  
+  const [lastCollectionTime, setLastCollectionTime] = useState<number>(() => initilizeNumberState('lastCollectionTime', Date.now()));
   const [unclaimedIncome, setUnclaimedIncome] = useState(0);
 
   const [showProductionModal, setShowProductionModal] = useState<boolean>(false);
   const [production, setProduction] = useState<ProductionType | null>(() => {
     const saved = localStorage.getItem(getLocalStorageKey('production'));
-    return saved ? (saved as ProductionType) : null;
+    return saved as ProductionType | null;
   });
 
   // Effect to initialize state from localStorage on mount and check for daily reward
@@ -155,6 +118,8 @@ const App: React.FC<AppProps> = ({ user }) => {
     const savedEndTime = localStorage.getItem(getLocalStorageKey('shiftEndTime'));
     if (savedEndTime) {
       const endTime = parseInt(savedEndTime, 10);
+      if(isNaN(endTime)) return;
+
       const timeLeft = endTime - Date.now();
       
       setShiftEndTime(endTime);
@@ -183,6 +148,8 @@ const App: React.FC<AppProps> = ({ user }) => {
     }
 
     const lastClaimTime = parseInt(lastClaimTimeStr, 10);
+    if(isNaN(lastClaimTime)) return;
+    
     const lastClaimDate = new Date(lastClaimTime);
     const now = new Date();
 
@@ -204,7 +171,7 @@ const App: React.FC<AppProps> = ({ user }) => {
       setCurrentDailyReward(reward);
       setShowDailyReward(true);
     }
-  }, []);
+  }, [userId]);
 
   // Effect to manage the countdown timer
   useEffect(() => {
@@ -269,34 +236,34 @@ const App: React.FC<AppProps> = ({ user }) => {
 
 
   // Effects to save data to localStorage
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('balance'), balance.toString()); }, [balance]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('level'), level.toString()); }, [level]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('experience'), experience.toString()); }, [experience]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('balance'), balance.toString()); }, [balance, userId]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('level'), level.toString()); }, [level, userId]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('experience'), experience.toString()); }, [experience, userId]);
   useEffect(() => {
     if (shiftEndTime) {
       localStorage.setItem(getLocalStorageKey('shiftEndTime'), shiftEndTime.toString());
     } else {
       localStorage.removeItem(getLocalStorageKey('shiftEndTime'));
     }
-  }, [shiftEndTime]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('researches'), JSON.stringify(researches)); }, [researches]);
+  }, [shiftEndTime, userId]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('researches'), JSON.stringify(researches)); }, [researches, userId]);
   useEffect(() => {
     if (activeResearch) {
       localStorage.setItem(getLocalStorageKey('activeResearch'), JSON.stringify(activeResearch));
     } else {
       localStorage.removeItem(getLocalStorageKey('activeResearch'));
     }
-  }, [activeResearch]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('inventory'), JSON.stringify(Array.from(inventory))); }, [inventory]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('ownedPartnerships'), JSON.stringify(Array.from(ownedPartnerships))); }, [ownedPartnerships]);
-  useEffect(() => { localStorage.setItem(getLocalStorageKey('lastCollectionTime'), lastCollectionTime.toString()); }, [lastCollectionTime]);
+  }, [activeResearch, userId]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('inventory'), JSON.stringify(Array.from(inventory))); }, [inventory, userId]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('ownedPartnerships'), JSON.stringify(Array.from(ownedPartnerships))); }, [ownedPartnerships, userId]);
+  useEffect(() => { localStorage.setItem(getLocalStorageKey('lastCollectionTime'), lastCollectionTime.toString()); }, [lastCollectionTime, userId]);
   useEffect(() => {
     if (production) {
       localStorage.setItem(getLocalStorageKey('production'), production);
     } else {
       localStorage.removeItem(getLocalStorageKey('production'));
     }
-  }, [production]);
+  }, [production, userId]);
 
   const startShift = useCallback(() => {
     const endTime = Date.now() + SHIFT_DURATION_MS;
@@ -340,7 +307,7 @@ const App: React.FC<AppProps> = ({ user }) => {
     localStorage.setItem(getLocalStorageKey('lastRewardClaimTime'), Date.now().toString());
     localStorage.setItem(getLocalStorageKey('dailyStreak'), dailyStreak.toString());
     setShowDailyReward(false);
-  }, [currentDailyReward, dailyStreak]);
+  }, [currentDailyReward, dailyStreak, userId]);
   
   const startResearch = useCallback((type: ResearchType) => {
     const research = researches[type];
@@ -434,7 +401,7 @@ const App: React.FC<AppProps> = ({ user }) => {
   const isModalOpen = showDailyReward || showResearchModal || showInventoryModal || showPartnershipModal || showProductionModal;
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center p-4 pt-8 relative font-sans">
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-start p-4 pt-8 relative font-sans">
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre-v2.png')] opacity-5"></div>
       
       {showDailyReward && <DailyRewardModal onClaim={claimDailyReward} rewardAmount={currentDailyReward} streakDay={dailyStreak} />}
@@ -475,56 +442,58 @@ const App: React.FC<AppProps> = ({ user }) => {
       <UserProfile user={user} />
       <Balance amount={balance} />
 
-      <header className="text-center mb-6 mt-16 sm:mt-8">
-        <h1 className="text-6xl font-extrabold text-yellow-400 tracking-wider uppercase" style={{ textShadow: '0 0 10px rgba(250, 204, 21, 0.5)' }}>
-          Комбинат
-        </h1>
-        <p className="text-gray-400 mt-2 text-lg">Тяжелый труд. Честная оплата.</p>
-      </header>
+      <div className="w-full flex flex-col items-center">
+        <header className="text-center mb-6 mt-16 sm:mt-8">
+          <h1 className="text-6xl font-extrabold text-yellow-400 tracking-wider uppercase" style={{ textShadow: '0 0 10px rgba(250, 204, 21, 0.5)' }}>
+            Комбинат
+          </h1>
+          <p className="text-gray-400 mt-2 text-lg">Тяжелый труд. Честная оплата.</p>
+        </header>
 
-      <ExperienceBar
-        level={level}
-        currentXp={experience}
-        xpForNextLevel={getXpForNextLevel(level)}
-      />
+        <ExperienceBar
+          level={level}
+          currentXp={experience}
+          xpForNextLevel={getXpForNextLevel(level)}
+        />
 
-      <div className={`w-full max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 items-start transition-filter duration-300 ${isModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
-        <main className="lg:col-span-2 w-full bg-gray-800/50 backdrop-blur-md rounded-2xl p-8 shadow-2xl border border-gray-700">
-          {renderContent()}
-        </main>
-        
-        <aside className="lg:col-span-1 w-full bg-gray-800/50 backdrop-blur-md rounded-2xl p-6 shadow-2xl border border-gray-700">
-            <h3 className="text-xl font-bold text-gray-300 mb-4 text-center border-b-2 border-gray-700 pb-2">Действия</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-2 gap-2">
-              <ActionButton 
-                icon="🔬" 
-                label="Исследования" 
-                onClick={() => setShowResearchModal(true)} 
-                disabled={showDailyReward} 
-              />
-              <ActionButton 
-                icon="🎒" 
-                label="Инвентарь" 
-                onClick={() => setShowInventoryModal(true)} 
-                disabled={showDailyReward} 
-              />
-              <ActionButton 
-                icon="🤝" 
-                label="Партнерство" 
-                onClick={() => setShowPartnershipModal(true)} 
-                disabled={showDailyReward} 
-              />
-              <ActionButton 
-                icon="🏭" 
-                label="Производство" 
-                onClick={() => setShowProductionModal(true)} 
-                disabled={showDailyReward} 
-              />
-            </div>
-        </aside>
+        <div className={`w-full max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8 items-start transition-filter duration-300 ${isModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
+          <main className="lg:col-span-2 w-full bg-gray-800/50 backdrop-blur-md rounded-2xl p-8 shadow-2xl border border-gray-700">
+            {renderContent()}
+          </main>
+          
+          <aside className="lg:col-span-1 w-full bg-gray-800/50 backdrop-blur-md rounded-2xl p-6 shadow-2xl border border-gray-700">
+              <h3 className="text-xl font-bold text-gray-300 mb-4 text-center border-b-2 border-gray-700 pb-2">Действия</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-2 gap-2">
+                <ActionButton 
+                  icon="🔬" 
+                  label="Исследования" 
+                  onClick={() => setShowResearchModal(true)} 
+                  disabled={showDailyReward} 
+                />
+                <ActionButton 
+                  icon="🎒" 
+                  label="Инвентарь" 
+                  onClick={() => setShowInventoryModal(true)} 
+                  disabled={showDailyReward} 
+                />
+                <ActionButton 
+                  icon="🤝" 
+                  label="Партнерство" 
+                  onClick={() => setShowPartnershipModal(true)} 
+                  disabled={showDailyReward} 
+                />
+                <ActionButton 
+                  icon="🏭" 
+                  label="Производство" 
+                  onClick={() => setShowProductionModal(true)} 
+                  disabled={showDailyReward} 
+                />
+              </div>
+          </aside>
+        </div>
       </div>
       
-      <footer className="mt-8 pb-4 text-gray-600 text-sm">
+      <footer className="w-full mt-8 pb-4 text-gray-600 text-sm text-center">
         <p>&copy; {new Date().getFullYear()} Корпорация "ТяжПромСталь". Все права защищены.</p>
       </footer>
     </div>

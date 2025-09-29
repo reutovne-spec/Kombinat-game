@@ -1,3 +1,5 @@
+
+
 import React, { useEffect, useState } from 'react';
 import App from './App';
 import { TelegramUser } from './types';
@@ -9,35 +11,62 @@ declare global {
   }
 }
 
-// Helper to create a JWT using the Web Crypto API
+// Helper to decode Base64 string to Uint8Array
+const base64ToUint8Array = (base64: string) => {
+    const binaryString = atob(base64.replace(/-/g, '+').replace(/_/g, '/'));
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+};
+
+// Helper to create a JWT using the Web Crypto API, following RFC 7519 standards.
 const createJwt = async (payload: object, secret: string): Promise<string> => {
   const header = { alg: 'HS256', typ: 'JWT' };
 
-  // URL-safe Base64 encoding
-  const encode = (data: string) => btoa(data).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  // Converts an ArrayBuffer to a Base64URL-encoded string.
+  const arrayBufferToBase64Url = (buffer: ArrayBuffer): string => {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+  };
 
-  const encodedHeader = encode(JSON.stringify(header));
-  const encodedPayload = encode(JSON.stringify(payload));
+  // Converts a string to a Base64URL-encoded string.
+  const stringToBase64Url = (str: string): string => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(str);
+    return arrayBufferToBase64Url(data);
+  };
+  
+  const encodedHeader = stringToBase64Url(JSON.stringify(header));
+  const encodedPayload = stringToBase64Url(JSON.stringify(payload));
 
-  const data = `${encodedHeader}.${encodedPayload}`;
+  const dataToSign = `${encodedHeader}.${encodedPayload}`;
+
+  const decodedSecret = base64ToUint8Array(secret);
 
   const key = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(secret),
+    decodedSecret,
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign']
   );
   
-  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(dataToSign));
   
-  // Convert ArrayBuffer to Base64 URL string
-  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
+  const encodedSignature = arrayBufferToBase64Url(signature);
 
-  return `${data}.${encodedSignature}`;
+  return `${dataToSign}.${encodedSignature}`;
 };
 
 
@@ -47,9 +76,6 @@ const Main: React.FC = () => {
 
   useEffect(() => {
     const authenticate = async (tgUser: TelegramUser) => {
-      // FIX: The original comparison `supabaseJwtSecret === 'YOUR_SUPER_SECRET_JWT_SECRET_HERE'` was causing
-      // a TypeScript error because the constant's literal type has no overlap with the placeholder string.
-      // The check has been simplified as the secret has been set.
       if (!supabaseJwtSecret) {
         console.error("Supabase JWT secret not configured in lib/supabaseClient.ts");
         setAuthStatus('error');
@@ -57,20 +83,20 @@ const Main: React.FC = () => {
       }
 
       try {
-        // The RLS policy expects a custom 'tg_user_id' claim.
-        // The 'sub' (subject) is kept for standard JWT practice.
         const payload = {
-          sub: tgUser.id.toString(),
-          tg_user_id: tgUser.id, // This is the critical change for RLS
+          sub: crypto.randomUUID(), 
+          tg_user_id: tgUser.id,
           role: 'authenticated',
-          // Add expiration to the token to make it valid for 24 hours
-          exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24), 
+          exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24), // 24 hour expiration
         };
         
         const jwt = await createJwt(payload, supabaseJwtSecret);
         
-        // FIX: The `setSession` method's type signature requires a `refresh_token`. In this custom auth flow,
-        // we provide the `access_token` as the refresh token to satisfy the requirement.
+        // FIX: The `setSession` method requires both an `access_token` and a `refresh_token`.
+        // Since we are using a custom JWT and re-authenticating on each app load,
+        // we don't have a traditional refresh token. We can pass the JWT itself
+        // to satisfy the type requirement. The client won't be able to refresh the token,
+        // but it's not needed for this app's authentication flow.
         const { error } = await supabase.auth.setSession({ access_token: jwt, refresh_token: jwt });
         
         if (error) throw error;

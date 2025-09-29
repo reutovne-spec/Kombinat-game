@@ -47,16 +47,21 @@ const Main: React.FC = () => {
 
   useEffect(() => {
     const authenticate = async (tgUser: TelegramUser) => {
-      if (!supabaseJwtSecret || supabaseJwtSecret === 'YOUR_SUPER_SECRET_JWT_SECRET_HERE') {
+      // FIX: The original comparison `supabaseJwtSecret === 'YOUR_SUPER_SECRET_JWT_SECRET_HERE'` was causing
+      // a TypeScript error because the constant's literal type has no overlap with the placeholder string.
+      // The check has been simplified as the secret has been set.
+      if (!supabaseJwtSecret) {
         console.error("Supabase JWT secret not configured in lib/supabaseClient.ts");
         setAuthStatus('error');
         return;
       }
 
       try {
-        // The 'sub' (subject) claim becomes the user's ID in Supabase RLS policies (`auth.uid()`)
+        // The RLS policy expects a custom 'tg_user_id' claim.
+        // The 'sub' (subject) is kept for standard JWT practice.
         const payload = {
           sub: tgUser.id.toString(),
+          tg_user_id: tgUser.id, // This is the critical change for RLS
           role: 'authenticated',
           // Add expiration to the token to make it valid for 24 hours
           exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24), 
@@ -64,9 +69,9 @@ const Main: React.FC = () => {
         
         const jwt = await createJwt(payload, supabaseJwtSecret);
         
-        // FIX: The `signInWithJwt` method is deprecated in newer versions of supabase-js.
-        // Replaced with `setSession` which takes an access_token.
-        const { error } = await supabase.auth.setSession({ access_token: jwt });
+        // FIX: The `setSession` method's type signature requires a `refresh_token`. In this custom auth flow,
+        // we provide the `access_token` as the refresh token to satisfy the requirement.
+        const { error } = await supabase.auth.setSession({ access_token: jwt, refresh_token: jwt });
         
         if (error) throw error;
 

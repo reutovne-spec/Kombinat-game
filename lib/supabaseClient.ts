@@ -13,8 +13,4 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.error("Supabase URL or anon key is missing. Please add it to lib/supabaseClient.ts");
 }
 
-if (supabaseJwtSecret === 'v3q8ptD/N0R7Y+rw8JCr+ejVE1armICc5bte5xADMoxQPSXCsd8Vz9ng5Txwa2tWE4NWUaJarFWW5ixyxDRI/g==') {
-  console.warn("Supabase JWT secret is not set in lib/supabaseClient.ts. Authentication will fail.");
-}
-
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

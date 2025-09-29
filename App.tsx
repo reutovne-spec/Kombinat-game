@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { AppState, ResearchType, ProductionType, TelegramUser } from './types';
 import { 
@@ -50,16 +52,19 @@ const App: React.FC<AppProps> = ({ user }) => {
 
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [balance, setBalance] = useState<number>(() => {
-    const savedBalance = localStorage.getItem(getLocalStorageKey('balance'));
-    return savedBalance ? parseInt(savedBalance, 10) : 0;
+    const saved = localStorage.getItem(getLocalStorageKey('balance'));
+    const parsed = parseInt(saved || '0', 10);
+    return isNaN(parsed) ? 0 : parsed;
   });
   const [level, setLevel] = useState<number>(() => {
-    const savedLevel = localStorage.getItem(getLocalStorageKey('level'));
-    return savedLevel ? parseInt(savedLevel, 10) : 1;
+    const saved = localStorage.getItem(getLocalStorageKey('level'));
+    const parsed = parseInt(saved || '1', 10);
+    return isNaN(parsed) ? 1 : parsed;
   });
   const [experience, setExperience] = useState<number>(() => {
-    const savedXp = localStorage.getItem(getLocalStorageKey('experience'));
-    return savedXp ? parseInt(savedXp, 10) : 0;
+    const saved = localStorage.getItem(getLocalStorageKey('experience'));
+    const parsed = parseInt(saved || '0', 10);
+    return isNaN(parsed) ? 0 : parsed;
   });
   const [shiftEndTime, setShiftEndTime] = useState<number | null>(null);
   const [remainingTime, setRemainingTime] = useState<number>(0);
@@ -70,31 +75,71 @@ const App: React.FC<AppProps> = ({ user }) => {
   
   const [showResearchModal, setShowResearchModal] = useState<boolean>(false);
   const [researches, setResearches] = useState<Researches>(() => {
-    const savedResearches = localStorage.getItem(getLocalStorageKey('researches'));
-    return savedResearches ? JSON.parse(savedResearches) : {
+    const saved = localStorage.getItem(getLocalStorageKey('researches'));
+    const defaultState = {
       [ResearchType.ECONOMIC]: { level: 0 },
       [ResearchType.TRAINING]: { level: 0 },
     };
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Basic validation
+        if (parsed[ResearchType.ECONOMIC] && parsed[ResearchType.TRAINING]) {
+          return parsed;
+        }
+      } catch (e) {
+        console.error("Error parsing researches from localStorage", e);
+      }
+    }
+    return defaultState;
   });
   const [activeResearch, setActiveResearch] = useState<ActiveResearch | null>(() => {
      const saved = localStorage.getItem(getLocalStorageKey('activeResearch'));
-     return saved ? JSON.parse(saved) : null;
+     if (saved) {
+       try {
+         return JSON.parse(saved);
+       } catch (e) {
+         console.error("Error parsing activeResearch from localStorage", e);
+       }
+     }
+     return null;
   });
   
   const [showInventoryModal, setShowInventoryModal] = useState<boolean>(false);
   const [inventory, setInventory] = useState<Set<string>>(() => {
-    const savedInventory = localStorage.getItem(getLocalStorageKey('inventory'));
-    return savedInventory ? new Set(JSON.parse(savedInventory)) : new Set();
+    const saved = localStorage.getItem(getLocalStorageKey('inventory'));
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return new Set(parsed);
+        }
+      } catch (e) {
+        console.error("Error parsing inventory from localStorage", e);
+      }
+    }
+    return new Set();
   });
 
   const [showPartnershipModal, setShowPartnershipModal] = useState<boolean>(false);
   const [ownedPartnerships, setOwnedPartnerships] = useState<Set<string>>(() => {
     const saved = localStorage.getItem(getLocalStorageKey('ownedPartnerships'));
-    return saved ? new Set(JSON.parse(saved)) : new Set();
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return new Set(parsed);
+        }
+      } catch (e) {
+        console.error("Error parsing ownedPartnerships from localStorage", e);
+      }
+    }
+    return new Set();
   });
   const [lastCollectionTime, setLastCollectionTime] = useState<number>(() => {
     const saved = localStorage.getItem(getLocalStorageKey('lastCollectionTime'));
-    return saved ? parseInt(saved, 10) : Date.now();
+    const parsed = parseInt(saved || '', 10);
+    return isNaN(parsed) ? Date.now() : parsed;
   });
   const [unclaimedIncome, setUnclaimedIncome] = useState(0);
 
@@ -389,7 +434,7 @@ const App: React.FC<AppProps> = ({ user }) => {
   const isModalOpen = showDailyReward || showResearchModal || showInventoryModal || showPartnershipModal || showProductionModal;
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-4 relative font-sans">
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center p-4 pt-8 relative font-sans">
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre-v2.png')] opacity-5"></div>
       
       {showDailyReward && <DailyRewardModal onClaim={claimDailyReward} rewardAmount={currentDailyReward} streakDay={dailyStreak} />}
@@ -430,7 +475,7 @@ const App: React.FC<AppProps> = ({ user }) => {
       <UserProfile user={user} />
       <Balance amount={balance} />
 
-      <header className="text-center mb-6">
+      <header className="text-center mb-6 mt-16 sm:mt-8">
         <h1 className="text-6xl font-extrabold text-yellow-400 tracking-wider uppercase" style={{ textShadow: '0 0 10px rgba(250, 204, 21, 0.5)' }}>
           Комбинат
         </h1>
@@ -450,7 +495,7 @@ const App: React.FC<AppProps> = ({ user }) => {
         
         <aside className="lg:col-span-1 w-full bg-gray-800/50 backdrop-blur-md rounded-2xl p-6 shadow-2xl border border-gray-700">
             <h3 className="text-xl font-bold text-gray-300 mb-4 text-center border-b-2 border-gray-700 pb-2">Действия</h3>
-            <div className="flex flex-row items-stretch gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-2 gap-2">
               <ActionButton 
                 icon="🔬" 
                 label="Исследования" 
@@ -479,7 +524,7 @@ const App: React.FC<AppProps> = ({ user }) => {
         </aside>
       </div>
       
-      <footer className="absolute bottom-4 text-gray-600 text-sm">
+      <footer className="mt-8 pb-4 text-gray-600 text-sm">
         <p>&copy; {new Date().getFullYear()} Корпорация "ТяжПромСталь". Все права защищены.</p>
       </footer>
     </div>
